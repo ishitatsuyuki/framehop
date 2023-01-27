@@ -43,20 +43,24 @@ impl UnwindRule for UnwindRuleX86_64 {
     where
         F: FnMut(u64) -> Result<u64, ()>,
     {
+        let checked_add = |lhs: u64, rhs: u64| lhs.checked_add(rhs).ok_or(Error::IntegerOverflow);
+        let checked_add_signed = |lhs:u64, rhs: i64| checked_add_signed(lhs, rhs).ok_or(Error::IntegerOverflow);
+        let mut read_stack = |addr: u64| read_stack(addr).map_err(|_| Error::CouldNotReadStack(addr));
+
         let sp = regs.sp();
         let (new_sp, new_bp) = match self {
             UnwindRuleX86_64::JustReturn => {
-                let new_sp = sp.checked_add(8).ok_or(Error::IntegerOverflow)?;
+                let new_sp = checked_add(sp, 8)?;
                 (new_sp, regs.bp())
             }
             UnwindRuleX86_64::JustReturnIfFirstFrameOtherwiseFp => {
                 if is_first_frame {
-                    let new_sp = sp.checked_add(8).ok_or(Error::IntegerOverflow)?;
+                    let new_sp = checked_add(sp, 8)?;
                     (new_sp, regs.bp())
                 } else {
                     let sp = regs.sp();
                     let bp = regs.bp();
-                    let new_sp = bp.checked_add(16).ok_or(Error::IntegerOverflow)?;
+                    let new_sp = checked_add(bp, 16)?;
                     if new_sp <= sp {
                         return Err(Error::FramepointerUnwindingMovedBackwards);
                     }
@@ -66,7 +70,7 @@ impl UnwindRule for UnwindRuleX86_64 {
             }
             UnwindRuleX86_64::OffsetSp { sp_offset_by_8 } => {
                 let sp_offset = u64::from(sp_offset_by_8) * 8;
-                let new_sp = sp.checked_add(sp_offset).ok_or(Error::IntegerOverflow)?;
+                let new_sp = checked_add(sp, sp_offset)?;
                 (new_sp, regs.bp())
             }
             UnwindRuleX86_64::OffsetSpAndRestoreBp {
@@ -74,13 +78,12 @@ impl UnwindRule for UnwindRuleX86_64 {
                 bp_storage_offset_from_sp_by_8,
             } => {
                 let sp_offset = u64::from(sp_offset_by_8) * 8;
-                let new_sp = sp.checked_add(sp_offset).ok_or(Error::IntegerOverflow)?;
+                let new_sp = checked_add(sp, sp_offset)?;
                 let bp_storage_offset_from_sp = i64::from(bp_storage_offset_from_sp_by_8) * 8;
-                let bp_location = checked_add_signed(sp, bp_storage_offset_from_sp)
-                    .ok_or(Error::IntegerOverflow)?;
+                let bp_location = checked_add_signed(sp, bp_storage_offset_from_sp)?;
                 let new_bp = match read_stack(bp_location) {
                     Ok(new_bp) => new_bp,
-                    Err(()) if is_first_frame && bp_location < sp => {
+                    Err(_) if is_first_frame && bp_location < sp => {
                         // Ignore errors when reading beyond the stack pointer in the first frame.
                         // These negative offsets are sometimes seen in x86_64 epilogues, where
                         // a bunch of registers are popped one after the other, and the compiler
@@ -91,7 +94,7 @@ impl UnwindRule for UnwindRuleX86_64 {
                         // sample record, where the ustack bytes are copied starting from sp.
                         regs.bp()
                     }
-                    Err(()) => return Err(Error::CouldNotReadStack(bp_location)),
+                    Err(e) => return Err(e),
                 };
                 (new_sp, new_bp)
             }
@@ -140,7 +143,7 @@ impl UnwindRule for UnwindRuleX86_64 {
                 if bp == 0 {
                     return Ok(None);
                 }
-                let new_sp = bp.checked_add(16).ok_or(Error::IntegerOverflow)?;
+                let new_sp = checked_add(bp, 16)?;
                 if new_sp <= sp {
                     return Err(Error::FramepointerUnwindingMovedBackwards);
                 }
