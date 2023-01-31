@@ -19,6 +19,11 @@ pub enum UnwindRuleX86_64 {
     },
     /// (sp, bp) = (bp + 16, *bp)
     UseFramePointer,
+    /// (sp, bp) = (bp + 8x, *(bp + 8y))
+    UseBasePointer {
+        sp_offset_from_bp_by_8: u16,
+        bp_storage_offset_from_bp_by_8: i16,
+    },
 }
 
 impl UnwindRule for UnwindRuleX86_64 {
@@ -154,6 +159,27 @@ impl UnwindRule for UnwindRuleX86_64 {
                 // purpose register, then any value (including zero) would be a valid value.
                 // At this point we don't know how the caller uses bp, so we leave new_bp unchecked.
 
+                (new_sp, new_bp)
+            }
+            UnwindRuleX86_64::UseBasePointer { sp_offset_from_bp_by_8, bp_storage_offset_from_bp_by_8 } => {
+                let sp = regs.sp();
+                let bp = regs.bp();
+
+                let sp_offset_from_bp = u64::from(sp_offset_from_bp_by_8) * 8;
+                let bp_storage_offset_from_bp = i64::from(bp_storage_offset_from_bp_by_8) * 8;
+                let new_sp = checked_add(bp, sp_offset_from_bp)?;
+                if new_sp <= sp {
+                    return Err(Error::FramepointerUnwindingMovedBackwards);
+                }
+                let bp_location = checked_add_signed(bp, bp_storage_offset_from_bp)?;
+                let new_bp = match read_stack(bp_location) {
+                    Ok(new_bp) => new_bp,
+                    Err(_) if is_first_frame && bp_location < sp => {
+                        // See OffsetSpAndRestoreBp.
+                        regs.bp()
+                    }
+                    Err(e) => return Err(e),
+                };
                 (new_sp, new_bp)
             }
         };

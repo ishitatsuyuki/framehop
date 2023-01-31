@@ -15,6 +15,7 @@ use crate::unwind_result::UnwindResult;
 use crate::unwind_rule::UnwindRule;
 use crate::FrameAddress;
 
+use crate::seh::{RvaMapper, SehUnwinder, SehUnwinding};
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::{
@@ -202,7 +203,7 @@ fn next_global_modules_generation() -> u16 {
 
 pub struct UnwinderInternal<
     D: Deref<Target = [u8]>,
-    A: Arch + DwarfUnwinding + CompactUnwindInfoUnwinding + InstructionAnalysis,
+    A: Arch + DwarfUnwinding + CompactUnwindInfoUnwinding + SehUnwinding + InstructionAnalysis,
     P: AllocationPolicy<D>,
 > {
     /// sorted by avma_range.start
@@ -215,7 +216,7 @@ pub struct UnwinderInternal<
 
 impl<
         D: Deref<Target = [u8]>,
-        A: Arch + DwarfUnwinding + CompactUnwindInfoUnwinding + InstructionAnalysis,
+        A: Arch + DwarfUnwinding + CompactUnwindInfoUnwinding + SehUnwinding + InstructionAnalysis,
         P: AllocationPolicy<D>,
     > Default for UnwinderInternal<D, A, P>
 {
@@ -226,7 +227,7 @@ impl<
 
 impl<
         D: Deref<Target = [u8]>,
-        A: Arch + DwarfUnwinding + CompactUnwindInfoUnwinding + InstructionAnalysis,
+        A: Arch + DwarfUnwinding + CompactUnwindInfoUnwinding + SehUnwinding + InstructionAnalysis,
         P: AllocationPolicy<D>,
     > UnwinderInternal<D, A, P>
 {
@@ -502,6 +503,11 @@ impl<
                     read_stack,
                 )?
             }
+            ModuleUnwindDataInternal::SehUnwindInfo(exception_data, rva_mapper) => {
+                let mut seh_unwinder =
+                    SehUnwinder::<_, A>::new(exception_data, &**rva_mapper, module.base_avma);
+                seh_unwinder.unwind_frame(regs, is_first_frame, read_stack)?
+            }
             ModuleUnwindDataInternal::None => return Err(UnwinderError::NoModuleUnwindData),
         };
         Ok(unwind_result)
@@ -536,6 +542,7 @@ pub enum ModuleUnwindData<D: Deref<Target = [u8]>> {
     /// DWARF CFI. We create a binary index for the FDEs when a module with this unwind
     /// data type is added.
     DebugFrame(D),
+    SehUnwindInfo(D, Box<dyn RvaMapper>),
     /// No unwind information is used. Unwinding in this module will use a fallback rule
     /// (usually frame pointer unwinding).
     None,
@@ -546,6 +553,7 @@ enum ModuleUnwindDataInternal<D: Deref<Target = [u8]>> {
     EhFrameHdrAndEhFrame(D, Arc<D>),
     DwarfCfiIndexAndEhFrame(DwarfCfiIndex, Arc<D>),
     DwarfCfiIndexAndDebugFrame(DwarfCfiIndex, Arc<D>),
+    SehUnwindInfo(D, Box<dyn RvaMapper>),
     None,
 }
 
@@ -574,6 +582,9 @@ impl<D: Deref<Target = [u8]>> ModuleUnwindDataInternal<D> {
                     ),
                     Err(_) => ModuleUnwindDataInternal::None,
                 }
+            }
+            ModuleUnwindData::SehUnwindInfo(exception_data, rva_mapper) => {
+                ModuleUnwindDataInternal::SehUnwindInfo(exception_data, rva_mapper)
             }
             ModuleUnwindData::None => ModuleUnwindDataInternal::None,
         }

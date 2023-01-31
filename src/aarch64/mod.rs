@@ -3,6 +3,7 @@ mod cache;
 mod dwarf;
 mod instruction_analysis;
 mod macho;
+mod seh;
 mod unwind_rule;
 mod unwinder;
 mod unwindregs;

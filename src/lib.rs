@@ -123,6 +123,7 @@ mod error;
 mod instruction_analysis;
 mod macho;
 mod rule_cache;
+mod seh;
 mod unwind_result;
 mod unwind_rule;
 mod unwinder;
@@ -136,6 +137,7 @@ pub use cache::{AllocationPolicy, MayAllocateDuringUnwind, MustNotAllocateDuring
 pub use code_address::FrameAddress;
 pub use error::Error;
 pub use rule_cache::CacheStats;
+pub use seh::RvaMapper;
 pub use unwinder::{
     Module, ModuleSvmaInfo, ModuleUnwindData, TextByteData, UnwindIterator, Unwinder,
 };

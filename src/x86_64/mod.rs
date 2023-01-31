@@ -6,6 +6,7 @@ mod macho;
 mod unwind_rule;
 mod unwinder;
 mod unwindregs;
+mod seh;
 
 pub use arch::*;
 pub use cache::*;

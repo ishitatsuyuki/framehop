@@ -140,6 +140,10 @@ fn translate_into_unwind_rule<R: gimli::Reader>(
                 if *offset == 16 && bp_cfa_offset == -16 {
                     Ok(UnwindRuleX86_64::UseFramePointer)
                 } else {
+                    Ok(UnwindRuleX86_64::UseBasePointer {
+                        sp_offset_from_bp_by_8: u16::try_from(*offset / 8).map_err(|_| ConversionError::FpStorageOffsetDoesNotFit)?,
+                        bp_storage_offset_from_bp_by_8: i16::try_from((*offset + bp_cfa_offset) / 8).map_err(|_| ConversionError::FpStorageOffsetDoesNotFit)?,
+                    })
                     // TODO: Maybe handle this case. This case has been observed in _ffi_call_unix64,
                     // which has the following unwind table:
                     //
@@ -148,7 +152,6 @@ fn translate_into_unwind_rule<R: gimli::Reader>(
                     //   0xde562: CFA=reg6+32: reg6=[CFA-16], reg16=[CFA-8]
                     //   0xde5ad: CFA=reg7+8: reg16=[CFA-8]
                     //   0xde668: CFA=reg7+8: reg6=[CFA-16], reg16=[CFA-8]
-                    Err(ConversionError::FramePointerRuleHasStrangeBpOffset)
                 }
             }
             _ => Err(ConversionError::CfaIsOffsetFromUnknownRegister),
