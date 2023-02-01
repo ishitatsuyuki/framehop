@@ -2,7 +2,6 @@ use std::marker::PhantomData;
 
 use crate::arch::Arch;
 use crate::unwind_result::UnwindResult;
-use crate::ModuleSvmaInfo;
 
 pub trait RvaMapper {
     fn map(&self, rva: u32) -> Option<&[u8]>;
@@ -16,7 +15,6 @@ impl<'a> RvaMapper for &'a (dyn RvaMapper + 'a) {
 
 pub struct SehUnwinder<'a, F: RvaMapper, A: SehUnwinding> {
     exception_data: &'a [u8],
-    base_avma: u64,
     rva_mapper: F,
     _arch: PhantomData<A>,
 }
@@ -29,14 +27,15 @@ pub enum SehUnwinderError {
     UnwindInfoForAddressFailed,
     #[error("Could not map unwind info RVA to file offset")]
     UnwindRvaMappingFailed,
+    #[error("Could not convert SEH unwind info into rule")]
+    ConversionError,
 }
 
 impl<'a, F: RvaMapper, A: SehUnwinding> SehUnwinder<'a, F, A> {
-    pub fn new(exception_data: &'a [u8], rva_mapper: F, base_avma: u64) -> Self {
+    pub fn new(exception_data: &'a [u8], rva_mapper: F) -> Self {
         Self {
             exception_data,
             rva_mapper,
-            base_avma,
             _arch: PhantomData,
         }
     }
@@ -44,13 +43,14 @@ impl<'a, F: RvaMapper, A: SehUnwinding> SehUnwinder<'a, F, A> {
     pub fn unwind_frame(
         &mut self,
         regs: &mut A::UnwindRegs,
+        rel_lookup_address: u32,
         is_first_frame: bool,
         mut read_stack: impl FnMut(u64) -> Result<u64, ()>,
     ) -> Result<UnwindResult<A::UnwindRule>, SehUnwinderError> {
         let result = A::unwind_frame(
             self.exception_data,
+            rel_lookup_address,
             &mut self.rva_mapper,
-            self.base_avma,
             regs,
             is_first_frame,
             &mut read_stack,
@@ -66,8 +66,8 @@ impl<'a, F: RvaMapper, A: SehUnwinding> SehUnwinder<'a, F, A> {
 pub trait SehUnwinding: Arch {
     fn unwind_frame<'a, F, G>(
         exception_data: &'a [u8],
+        rel_lookup_address: u32,
         rva_mapper: &mut F,
-        base_avma: u64,
         regs: &mut Self::UnwindRegs,
         is_first_frame: bool,
         read_stack: &mut G,

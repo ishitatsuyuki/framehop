@@ -2,6 +2,7 @@ use crate::seh::{RvaMapper, SehUnwinderError, SehUnwinding};
 use crate::unwind_result::UnwindResult;
 use crate::x86_64::{ArchX86_64, UnwindRegsX86_64, UnwindRuleX86_64};
 use crate::ModuleSvmaInfo;
+use fallible_iterator::{FallibleIterator, IntoFallibleIterator};
 use goblin::pe::exception::{
     ExceptionData, Register, StackFrameOffset, UnwindInfo, UnwindOperation,
 };
@@ -22,15 +23,17 @@ pub struct RuntimeFunction {
     pub unwind_info_address: u32,
 }
 
-struct UnwindInfoChunk<I: IntoIterator<Item = UnwindOperation>> {
+struct UnwindInfoChunk<
+    I: IntoFallibleIterator<Item = UnwindOperation, Error = goblin::error::Error>,
+> {
     codes: I,
     frame_register: Register,
     frame_register_offset: u32,
 }
 
 fn seh_to_unwind_rule<
-    I: IntoIterator<Item = UnwindInfoChunk<J>>,
-    J: IntoIterator<Item = UnwindOperation>,
+    I: IntoFallibleIterator<Item = UnwindInfoChunk<J>, Error = goblin::error::Error>,
+    J: IntoFallibleIterator<Item = UnwindOperation, Error = goblin::error::Error>,
 >(
     chunks: I,
 ) -> Result<UnwindRuleX86_64, goblin::error::Error> {
@@ -40,11 +43,14 @@ fn seh_to_unwind_rule<
     // &new_bp - sp if !use_bp, &new_bp - bp if use_bp.
     let mut bp_offset = None;
 
-    for chunk in chunks {
+    let mut chunks = chunks.into_fallible_iter();
+
+    while let Some(chunk) = chunks.next()? {
         if chunk.frame_register != RBP {
             // TODO: error out
         }
-        for op in chunk.codes {
+        let mut codes = chunk.codes.into_fallible_iter();
+        while let Some(op) = codes.next()? {
             match op {
                 UnwindOperation::PushNonVolatile(reg) => {
                     if reg == RBP {
@@ -103,11 +109,11 @@ fn seh_to_unwind_rule<
 impl SehUnwinding for ArchX86_64 {
     fn unwind_frame<'a, F, G>(
         exception_data: &'a [u8],
+        rel_lookup_address: u32,
         rva_mapper: &mut F,
-        base_avma: u64,
-        regs: &mut Self::UnwindRegs,
-        is_first_frame: bool,
-        read_stack: &mut G,
+        _regs: &mut Self::UnwindRegs,
+        _is_first_frame: bool,
+        _read_stack: &mut G,
     ) -> Result<UnwindResult<Self::UnwindRule>, SehUnwinderError>
     where
         F: RvaMapper,
@@ -116,12 +122,12 @@ impl SehUnwinding for ArchX86_64 {
         let runtime_function: &[RuntimeFunction] = LayoutVerified::new_slice(exception_data)
             .ok_or(SehUnwinderError::InvalidRuntimeFunction)?
             .into_slice();
-        let ip = (regs.ip() - base_avma) as u32; // TODO: overflow
+        let ip = rel_lookup_address;
         let idx = runtime_function
             .partition_point(|f| f.begin_address <= ip)
             .saturating_sub(1);
         let func = &runtime_function[idx];
-        if func.end_address <= ip {
+        if func.begin_address > ip || func.end_address <= ip {
             return Err(SehUnwinderError::UnwindInfoForAddressFailed);
         }
         let func_offset = ip - func.begin_address;
@@ -130,29 +136,26 @@ impl SehUnwinding for ArchX86_64 {
             .map(func.unwind_info_address)
             .ok_or(SehUnwinderError::UnwindRvaMappingFailed)?;
         let unwind_info = UnwindInfo::parse(unwind_info, 0).unwrap();
-        let unwind_chain = iter::successors(Some(unwind_info), |info| {
-            info.chained_info.map(|f| {
-                let unwind_info = rva_mapper.map(f.unwind_info_address);
-                UnwindInfo::parse(unwind_info.unwrap(), 0).unwrap()
-            })
-        });
+        let unwind_chain =
+            fallible_iterator::convert(iter::successors(Some(Ok(unwind_info)), |info| {
+                info.as_ref().ok()?.chained_info.map(|f| {
+                    let unwind_info = rva_mapper.map(f.unwind_info_address);
+                    UnwindInfo::parse(unwind_info.unwrap(), 0)
+                })
+            }));
 
-        // eprintln!("base_avma: {:#x}, ip: {:#x}", base_avma, ip);
         Ok(UnwindResult::ExecRule(
             seh_to_unwind_rule(unwind_chain.enumerate().map(|(i, info)| {
                 let is_first = i == 0;
-                UnwindInfoChunk {
-                    codes: info
-                        .unwind_codes()
-                        .skip_while(move |x| {
-                            is_first && x.as_ref().unwrap().code_offset as u32 > func_offset
-                        })
-                        .map(|x| x.unwrap().operation),
+                Ok(UnwindInfoChunk {
+                    codes: fallible_iterator::convert(info.unwind_codes())
+                        .skip_while(move |x| Ok(is_first && x.code_offset as u32 > func_offset))
+                        .map(|x| Ok(x.operation)),
                     frame_register: info.frame_register,
                     frame_register_offset: info.frame_register_offset,
-                }
+                })
             }))
-            .unwrap(),
+            .map_err(|_| SehUnwinderError::ConversionError)?,
         ))
     }
 
@@ -164,7 +167,14 @@ impl SehUnwinding for ArchX86_64 {
 #[cfg(test)]
 mod tests {
     use crate::x86_64::seh::UnwindInfoChunk;
+    use fallible_iterator::FallibleIterator;
     use goblin::pe::exception::{Register, StackFrameOffset, UnwindOperation};
+
+    fn convert_iterable<T, I: IntoIterator<Item = T>, E>(
+        iter: I,
+    ) -> impl FallibleIterator<Item = T, Error = E> {
+        fallible_iterator::convert(iter.into_iter().map(Ok))
+    }
 
     #[test]
     fn with_sp() {
@@ -184,11 +194,11 @@ mod tests {
             UnwindOperation::PushNonVolatile(Register(5)),
             UnwindOperation::PushNonVolatile(Register(3)),
         ];
-        let rule = super::seh_to_unwind_rule([UnwindInfoChunk {
-            codes,
+        let rule = super::seh_to_unwind_rule(convert_iterable([UnwindInfoChunk {
+            codes: convert_iterable(codes),
             frame_register: Register(0),
             frame_register_offset: 0,
-        }])
+        }]))
         .unwrap();
         assert_eq!(
             rule,
@@ -223,11 +233,11 @@ mod tests {
             UnwindOperation::SetFPRegister,
             UnwindOperation::PushNonVolatile(Register(5)),
         ];
-        let rule = super::seh_to_unwind_rule([UnwindInfoChunk {
-            codes,
+        let rule = super::seh_to_unwind_rule(convert_iterable([UnwindInfoChunk {
+            codes: convert_iterable(codes),
             frame_register: Register(5),
             frame_register_offset: 0,
-        }])
+        }]))
         .unwrap();
         assert_eq!(
             rule,
@@ -262,11 +272,11 @@ mod tests {
             UnwindOperation::PushNonVolatile(Register(12)),
             UnwindOperation::PushNonVolatile(Register(5)),
         ];
-        let rule = super::seh_to_unwind_rule([UnwindInfoChunk {
-            codes,
+        let rule = super::seh_to_unwind_rule(convert_iterable([UnwindInfoChunk {
+            codes: convert_iterable(codes),
             frame_register: Register(5),
             frame_register_offset: 0x30,
-        }])
+        }]))
         .unwrap();
         assert_eq!(
             rule,

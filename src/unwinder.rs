@@ -505,8 +505,8 @@ impl<
             }
             ModuleUnwindDataInternal::SehUnwindInfo(exception_data, rva_mapper) => {
                 let mut seh_unwinder =
-                    SehUnwinder::<_, A>::new(exception_data, &**rva_mapper, module.base_avma);
-                seh_unwinder.unwind_frame(regs, is_first_frame, read_stack)?
+                    SehUnwinder::<_, A>::new(exception_data, &**rva_mapper);
+                seh_unwinder.unwind_frame(regs, rel_lookup_address, is_first_frame, read_stack)?
             }
             ModuleUnwindDataInternal::None => return Err(UnwinderError::NoModuleUnwindData),
         };

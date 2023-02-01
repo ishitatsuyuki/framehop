@@ -5,8 +5,8 @@ use crate::unwind_result::UnwindResult;
 impl SehUnwinding for ArchAarch64 {
     fn unwind_frame<'a, F, G>(
         exception_data: &'a [u8],
+        rel_lookup_address: u32,
         rva_mapper: &mut F,
-        base_avma: u64,
         regs: &mut Self::UnwindRegs,
         is_first_frame: bool,
         read_stack: &mut G,
