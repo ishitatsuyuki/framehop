@@ -23,20 +23,18 @@ pub struct RuntimeFunction {
     pub unwind_info_address: u32,
 }
 
-struct UnwindInfoChunk<
-    I: IntoFallibleIterator<Item = UnwindOperation, Error = goblin::error::Error>,
-> {
+struct UnwindInfoChunk<I: IntoFallibleIterator<Item = UnwindOperation, Error = SehUnwinderError>> {
     codes: I,
     frame_register: Register,
     frame_register_offset: u32,
 }
 
 fn seh_to_unwind_rule<
-    I: IntoFallibleIterator<Item = UnwindInfoChunk<J>, Error = goblin::error::Error>,
-    J: IntoFallibleIterator<Item = UnwindOperation, Error = goblin::error::Error>,
+    I: IntoFallibleIterator<Item = UnwindInfoChunk<J>, Error = SehUnwinderError>,
+    J: IntoFallibleIterator<Item = UnwindOperation, Error = SehUnwinderError>,
 >(
     chunks: I,
-) -> Result<UnwindRuleX86_64, goblin::error::Error> {
+) -> Result<UnwindRuleX86_64, SehUnwinderError> {
     let mut use_bp = false;
     // (new_sp - sp) if !use_bp, (new_sp - bp) if use_bp.
     let mut sp_offset = 0;
@@ -91,7 +89,8 @@ fn seh_to_unwind_rule<
     Ok(if use_bp {
         UnwindRuleX86_64::UseBasePointer {
             sp_offset_from_bp_by_8: (sp_offset / 8) as u16, // TODO: overflow
-            bp_storage_offset_from_bp_by_8: (bp_offset.unwrap() / 8) as i16, // TODO: overflow
+            bp_storage_offset_from_bp_by_8: (bp_offset.ok_or(SehUnwinderError::ConversionError)?
+                / 8) as i16, // TODO: overflow
         }
     } else {
         match bp_offset {
@@ -135,12 +134,15 @@ impl SehUnwinding for ArchX86_64 {
         let unwind_info = rva_mapper
             .map(func.unwind_info_address)
             .ok_or(SehUnwinderError::UnwindRvaMappingFailed)?;
-        let unwind_info = UnwindInfo::parse(unwind_info, 0).unwrap();
+        let unwind_info =
+            UnwindInfo::parse(unwind_info, 0).map_err(|_| SehUnwinderError::GoblinError)?;
         let unwind_chain =
             fallible_iterator::convert(iter::successors(Some(Ok(unwind_info)), |info| {
                 info.as_ref().ok()?.chained_info.map(|f| {
-                    let unwind_info = rva_mapper.map(f.unwind_info_address);
-                    UnwindInfo::parse(unwind_info.unwrap(), 0)
+                    let unwind_info = rva_mapper
+                        .map(f.unwind_info_address)
+                        .ok_or(SehUnwinderError::UnwindRvaMappingFailed)?;
+                    UnwindInfo::parse(unwind_info, 0).map_err(|_| SehUnwinderError::GoblinError)
                 })
             }));
 
@@ -148,9 +150,12 @@ impl SehUnwinding for ArchX86_64 {
             seh_to_unwind_rule(unwind_chain.enumerate().map(|(i, info)| {
                 let is_first = i == 0;
                 Ok(UnwindInfoChunk {
-                    codes: fallible_iterator::convert(info.unwind_codes())
-                        .skip_while(move |x| Ok(is_first && x.code_offset as u32 > func_offset))
-                        .map(|x| Ok(x.operation)),
+                    codes: fallible_iterator::convert(
+                        info.unwind_codes()
+                            .map(|x| x.map_err(|_| SehUnwinderError::GoblinError)),
+                    )
+                    .skip_while(move |x| Ok(is_first && x.code_offset as u32 > func_offset))
+                    .map(|x| Ok(x.operation)),
                     frame_register: info.frame_register,
                     frame_register_offset: info.frame_register_offset,
                 })

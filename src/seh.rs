@@ -29,6 +29,8 @@ pub enum SehUnwinderError {
     UnwindRvaMappingFailed,
     #[error("Could not convert SEH unwind info into rule")]
     ConversionError,
+    #[error("Could not parse unwind info")]
+    GoblinError,
 }
 
 impl<'a, F: RvaMapper, A: SehUnwinding> SehUnwinder<'a, F, A> {
