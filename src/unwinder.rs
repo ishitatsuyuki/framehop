@@ -891,6 +891,20 @@ pub struct ExplicitModuleSectionInfo<D> {
     pub text_segment_svma: Option<Range<u64>>,
     /// The data of the `__TEXT` segment of mach-O binaries, if available.
     pub text_segment: Option<D>,
+    /// The data of the `.pdata` section of PE binaries. This section contains a table of exception
+    /// handler records and is used to find the RVA into the .rdata or .xdata section of the unwind
+    /// info entry. The related address range is not needed.
+    pub pdata: Option<D>,
+    /// The address range of the `.rdata` section of PE binaries. This will be used to resolve RVAs.
+    pub rdata_svma: Option<Range<u64>>,
+    /// The data of the `.rdata` section of PE binaries. On x86-64, this section contains the actual
+    /// unwind info entry.
+    pub rdata: Option<D>,
+    /// The address range of the `.xdata` section of PE binaries. This will be used to resolve RVAs.
+    pub xdata_svma: Option<Range<u64>>,
+    /// The data of the `.xdata` section of PE binaries. On AArch64, this section contains the actual
+    /// unwind info entry.
+    pub xdata: Option<D>,
 }
 
 impl<D> ModuleSectionInfo<D> for ExplicitModuleSectionInfo<D>
@@ -909,6 +923,8 @@ where
             b"__eh_frame" | b".eh_frame" => self.eh_frame_svma.clone(),
             b"__eh_frame_hdr" | b".eh_frame_hdr" => self.eh_frame_hdr_svma.clone(),
             b"__got" | b".got" => self.got_svma.clone(),
+            b".rdata" => self.rdata_svma.take(),
+            b".xdata" => self.xdata_svma.take(),
             _ => None,
         }
     }
@@ -919,6 +935,9 @@ where
             b"__eh_frame" | b".eh_frame" => self.eh_frame.take(),
             b"__eh_frame_hdr" | b".eh_frame_hdr" => self.eh_frame_hdr.take(),
             b"__debug_frame" | b".debug_frame" => self.debug_frame.take(),
+            b".pdata" => self.pdata.take(),
+            b".rdata" => self.rdata.take(),
+            b".xdata" => self.xdata.take(),
             _ => None,
         }
     }
