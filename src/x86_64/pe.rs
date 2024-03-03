@@ -125,10 +125,10 @@ impl PeUnwinding for ArchX86_64 {
             // unwinding from the epilog). We only need to check this for the first unwind info (if
             // there are chained infos).
             let bytes = (function.end_address.get() - address) as usize;
-            let instruction = &sections.text_memory_at_rva(address)?[..bytes];
-            if let Ok(epilog_instructions) =
+            let instruction = sections.text_memory_at_rva(address).map(|b| &b[..bytes]);
+            if let Ok(Ok(epilog_instructions)) = instruction.map(|instruction| {
                 FunctionEpilogInstruction::parse_sequence(instruction, unwind_info.frame_register())
-            {
+            }) {
                 // If the epilog is an optional AddSP followed by Pops, we can return a cache
                 // rule.
                 if let Some(rule) =
