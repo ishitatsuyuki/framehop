@@ -19,12 +19,20 @@ pe-unwind-info = { version = "0.6", optional = true }
 fallible-iterator = "0.3.0"
 arrayvec = { version = "0.7.4", default-features = false }
 cfg-if = "1.0.0"
+object = { version = "0.37", optional = true }
+clap = { version = "4.5", features = ["derive"], optional = true }
 
 [features]
 default = ["std", "macho", "pe"]
 macho = ["macho-unwind-info"]
 pe = ["pe-unwind-info"]
 std = ["arrayvec/std", "gimli/std"]
+sframe-converter = ["object", "clap", "std"]
+
+[[bin]]
+name = "framehop-to-sframe"
+path = "src/bin/framehop_to_sframe.rs"
+required-features = ["sframe-converter"]
 
 [dev-dependencies]
 object = "0.37"

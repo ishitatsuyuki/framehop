@@ -128,6 +128,8 @@ mod macho;
 #[cfg(feature = "pe")]
 mod pe;
 mod rule_cache;
+#[cfg(feature = "sframe-converter")]
+pub mod sframe;
 mod unwind_result;
 mod unwind_rule;
 mod unwinder;

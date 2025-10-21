@@ -6,7 +6,7 @@ mod instruction_analysis;
 mod macho;
 #[cfg(feature = "pe")]
 mod pe;
-mod register_ordering;
+pub mod register_ordering;
 mod unwind_rule;
 mod unwinder;
 mod unwindregs;
