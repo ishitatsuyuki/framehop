@@ -53,8 +53,8 @@ pub enum SFrameError {
         offset: i32,
         offset_size: SFrameOffsetSize,
     },
-    /// Function has no FREs
-    EmptyFunction,
+    /// No functions with FREs to serialize
+    NoFunctions,
     /// I/O error
     Io(io::Error),
 }
@@ -85,7 +85,7 @@ impl std::fmt::Display for SFrameError {
                     offset, offset_size
                 )
             }
-            SFrameError::EmptyFunction => write!(f, "Function has no FREs"),
+            SFrameError::NoFunctions => write!(f, "No functions with FREs to serialize"),
             SFrameError::Io(e) => write!(f, "I/O error: {}", e),
         }
     }
@@ -225,22 +225,28 @@ impl ToLeBytes for i32 {
 pub fn serialize_sframe<W: Write>(
     writer: &mut W,
     functions: &[FunctionDescriptor],
-) -> Result<(), SFrameError> {
+) -> Result<usize, SFrameError> {
+    // Filter out functions with no FREs (they cannot be serialized)
+    let valid_functions: Vec<_> = functions.iter().filter(|f| !f.fres.is_empty()).collect();
+
+    let skipped_count = functions.len() - valid_functions.len();
+
+    if valid_functions.is_empty() {
+        return Err(SFrameError::NoFunctions);
+    }
+
     // Calculate what we need for the header
-    let num_fdes = functions.len() as u32;
+    let num_fdes = valid_functions.len() as u32;
     let mut num_fres = 0u32;
 
-    // Validate and count FREs
-    for func in functions {
-        if func.fres.is_empty() {
-            return Err(SFrameError::EmptyFunction);
-        }
+    // Count FREs
+    for func in &valid_functions {
         num_fres += func.fres.len() as u32;
     }
 
     // Determine FRE types and offset sizes for each function
     let mut fre_metadata: Vec<(SFrameFREType, SFrameOffsetSize)> = Vec::new();
-    for func in functions {
+    for func in &valid_functions {
         let max_pc_offset = func.fres.iter().map(|fre| fre.pc_offset).max().unwrap();
         let fre_type = determine_fre_type(max_pc_offset);
 
@@ -265,7 +271,7 @@ pub fn serialize_sframe<W: Write>(
 
     // Calculate FRE section size
     let mut fre_len = 0u32;
-    for (i, func) in functions.iter().enumerate() {
+    for (i, func) in valid_functions.iter().enumerate() {
         let (fre_type, offset_size) = fre_metadata[i];
         let fre_header_size = match fre_type {
             SFrameFREType::Addr1 => 2, // 1 byte addr + 1 byte info
@@ -327,7 +333,7 @@ pub fn serialize_sframe<W: Write>(
 
     // Write FDEs
     let mut current_fre_offset = 0u32;
-    for (i, func) in functions.iter().enumerate() {
+    for (i, func) in valid_functions.iter().enumerate() {
         let (fre_type, _) = fre_metadata[i];
 
         let fde = SFrameFDE {
@@ -371,7 +377,7 @@ pub fn serialize_sframe<W: Write>(
     }
 
     // Write FREs
-    for (i, func) in functions.iter().enumerate() {
+    for (i, func) in valid_functions.iter().enumerate() {
         let (fre_type, offset_size) = fre_metadata[i];
 
         for fre in &func.fres {
@@ -422,7 +428,7 @@ pub fn serialize_sframe<W: Write>(
         }
     }
 
-    Ok(())
+    Ok(skipped_count)
 }
 
 /// Write a stack offset in the appropriate size

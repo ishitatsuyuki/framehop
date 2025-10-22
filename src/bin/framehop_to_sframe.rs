@@ -22,6 +22,7 @@ struct ConversionStats {
     translation_failures: usize,
     unsupported: usize,
     skipped: usize,
+    empty_functions: usize,
 }
 
 #[derive(Parser)]
@@ -80,20 +81,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     };
 
-    // Print statistics
-    eprintln!("\nConversion Statistics:");
-    eprintln!("  Total FDEs processed: {}", stats.total_fdes);
-    eprintln!("  Total unwind rows:    {}", stats.total_rows);
-    eprintln!("  Successful FREs:      {}", stats.successful_fres);
-    eprintln!("  Translation failures: {}", stats.translation_failures);
-    eprintln!("  Unsupported:          {}", stats.unsupported);
-    eprintln!("  Skipped:              {}", stats.skipped);
-
-    if stats.total_rows > 0 {
-        let success_rate = (stats.successful_fres as f64 / stats.total_rows as f64) * 100.0;
-        eprintln!("  Success rate:         {:.2}%", success_rate);
-    }
-
     // Output results
     if let Some(output_path) = args.output {
         // Write binary SFrame format
@@ -103,7 +90,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Convert BTreeMap to Vec for serialization
         let func_vec: Vec<_> = functions.into_values().collect();
 
-        serialize_sframe(&mut writer, &func_vec)?;
+        let skipped_empty = serialize_sframe(&mut writer, &func_vec)?;
+        stats.empty_functions = skipped_empty;
+
+        // Print statistics
+        eprintln!("\nConversion Statistics:");
+        eprintln!("  Total FDEs processed: {}", stats.total_fdes);
+        eprintln!("  Total unwind rows:    {}", stats.total_rows);
+        eprintln!("  Successful FREs:      {}", stats.successful_fres);
+        eprintln!("  Translation failures: {}", stats.translation_failures);
+        eprintln!("  Unsupported:          {}", stats.unsupported);
+        eprintln!("  Skipped:              {}", stats.skipped);
+        if stats.empty_functions > 0 {
+            eprintln!(
+                "  Empty functions:      {} (excluded from output)",
+                stats.empty_functions
+            );
+        }
+
+        if stats.total_rows > 0 {
+            let success_rate = (stats.successful_fres as f64 / stats.total_rows as f64) * 100.0;
+            eprintln!("  Success rate:         {:.2}%", success_rate);
+        }
 
         eprintln!("\nSFrame section written to {}", output_path.display());
     } else {
