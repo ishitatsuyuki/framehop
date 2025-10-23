@@ -260,7 +260,7 @@ pub fn serialize_sframe<W: Write>(
                     super::types::FpTracking::Unchanged => 0,
                     super::types::FpTracking::AtCfaOffset(off) => (off as i32).abs(),
                 };
-                cfa_abs.max(fp_abs).max(8) // RA is always at CFA-8
+                cfa_abs.max(fp_abs)
             })
             .max()
             .unwrap();
@@ -286,10 +286,10 @@ pub fn serialize_sframe<W: Write>(
 
         for fre in &func.fres {
             // Each FRE has: address + info + offsets
-            // Offsets: CFA (always), RA (always for x86_64), FP (if tracked)
+            // Offsets: CFA (always), FP (if tracked)
             let num_offsets = match fre.fp_tracking {
-                super::types::FpTracking::Unchanged => 2,      // CFA + RA
-                super::types::FpTracking::AtCfaOffset(_) => 3, // CFA + RA + FP
+                super::types::FpTracking::Unchanged => 1,      // CFA
+                super::types::FpTracking::AtCfaOffset(_) => 2, // CFA + FP
             };
             fre_len += fre_header_size + (num_offsets * offset_byte_size);
         }
@@ -369,8 +369,8 @@ pub fn serialize_sframe<W: Write>(
 
         for fre in &func.fres {
             let num_offsets = match fre.fp_tracking {
-                super::types::FpTracking::Unchanged => 2,
-                super::types::FpTracking::AtCfaOffset(_) => 3,
+                super::types::FpTracking::Unchanged => 1,
+                super::types::FpTracking::AtCfaOffset(_) => 2,
             };
             current_fre_offset += fre_header_size + (num_offsets * offset_byte_size);
         }
@@ -408,8 +408,8 @@ pub fn serialize_sframe<W: Write>(
 
             // Write FRE info word
             let offset_count = match fre.fp_tracking {
-                super::types::FpTracking::Unchanged => 2,
-                super::types::FpTracking::AtCfaOffset(_) => 3,
+                super::types::FpTracking::Unchanged => 1,
+                super::types::FpTracking::AtCfaOffset(_) => 2,
             };
             let info = encode_fre_info(fre.cfa_base, offset_count, offset_size, false);
             write_le(writer, info)?;
@@ -418,10 +418,7 @@ pub fn serialize_sframe<W: Write>(
             // 1. CFA offset
             write_offset(writer, fre.cfa_offset, offset_size)?;
 
-            // 2. RA offset (always -8 from CFA for x86_64)
-            write_offset(writer, -8, offset_size)?;
-
-            // 3. FP offset (if tracked)
+            // 2. FP offset (if tracked)
             if let super::types::FpTracking::AtCfaOffset(fp_offset) = fre.fp_tracking {
                 write_offset(writer, fp_offset as i32, offset_size)?;
             }
