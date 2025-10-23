@@ -23,6 +23,7 @@ struct ConversionStats {
     unsupported: usize,
     skipped: usize,
     empty_functions: usize,
+    merged_fres: usize,
 }
 
 #[derive(Parser)]
@@ -88,10 +89,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut writer = BufWriter::new(file);
 
         // Convert BTreeMap to Vec for serialization
-        let func_vec: Vec<_> = functions.into_values().collect();
+        let mut func_vec: Vec<_> = functions.into_values().collect();
 
-        let skipped_empty = serialize_sframe(&mut writer, &func_vec)?;
+        let (skipped_empty, merged) = serialize_sframe(&mut writer, &mut func_vec)?;
         stats.empty_functions = skipped_empty;
+        stats.merged_fres = merged;
 
         // Print statistics
         eprintln!("\nConversion Statistics:");
@@ -101,6 +103,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("  Translation failures: {}", stats.translation_failures);
         eprintln!("  Unsupported:          {}", stats.unsupported);
         eprintln!("  Skipped:              {}", stats.skipped);
+        if stats.merged_fres > 0 {
+            eprintln!("  Merged duplicate FREs: {}", stats.merged_fres);
+        }
         if stats.empty_functions > 0 {
             eprintln!(
                 "  Empty functions:      {} (excluded from output)",

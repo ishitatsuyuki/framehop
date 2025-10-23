@@ -222,10 +222,17 @@ impl ToLeBytes for i32 {
 }
 
 /// Serialize SFrame section to binary format
+/// Returns a tuple of (skipped_empty_functions, merged_fres)
 pub fn serialize_sframe<W: Write>(
     writer: &mut W,
-    functions: &[FunctionDescriptor],
-) -> Result<usize, SFrameError> {
+    functions: &mut [FunctionDescriptor],
+) -> Result<(usize, usize), SFrameError> {
+    // First, deduplicate consecutive identical FREs in each function
+    let mut total_merged = 0;
+    for func in functions.iter_mut() {
+        total_merged += func.deduplicate_fres();
+    }
+
     // Filter out functions with no FREs (they cannot be serialized)
     let valid_functions: Vec<_> = functions.iter().filter(|f| !f.fres.is_empty()).collect();
 
@@ -425,7 +432,7 @@ pub fn serialize_sframe<W: Write>(
         }
     }
 
-    Ok(skipped_count)
+    Ok((skipped_count, total_merged))
 }
 
 /// Write a stack offset in the appropriate size

@@ -71,6 +71,13 @@ impl FrameRowEntry {
         }
     }
 
+    /// Check if this FRE has the same unwind rule as another (ignoring pc_offset)
+    pub fn same_rule(&self, other: &FrameRowEntry) -> bool {
+        self.cfa_base == other.cfa_base
+            && self.cfa_offset == other.cfa_offset
+            && self.fp_tracking == other.fp_tracking
+    }
+
     /// Format as human-readable text
     pub fn format(&self) -> String {
         format!(
@@ -108,6 +115,30 @@ impl FunctionDescriptor {
 
     pub fn add_fre(&mut self, fre: FrameRowEntry) {
         self.fres.push(fre);
+    }
+
+    /// Deduplicate consecutive FREs with identical unwind rules
+    /// Returns the number of FREs that were removed
+    pub fn deduplicate_fres(&mut self) -> usize {
+        if self.fres.len() <= 1 {
+            return 0;
+        }
+
+        let original_len = self.fres.len();
+        let mut write_idx = 0;
+
+        for read_idx in 0..self.fres.len() {
+            // Keep this FRE if it's the first one, or if it differs from the previous kept FRE
+            if write_idx == 0 || !self.fres[read_idx].same_rule(&self.fres[write_idx - 1]) {
+                if read_idx != write_idx {
+                    self.fres[write_idx] = self.fres[read_idx].clone();
+                }
+                write_idx += 1;
+            }
+        }
+
+        self.fres.truncate(write_idx);
+        original_len - write_idx
     }
 
     /// Format as human-readable text
