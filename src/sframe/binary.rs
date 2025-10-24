@@ -169,8 +169,8 @@ fn encode_fre_info(
     let offset_size_bits = ((offset_size as u8) & 0x3) << 5;
     let offset_count_bits = (offset_count & 0xF) << 1;
     let cfa_base_reg_bit = match cfa_base_reg {
-        CfaBaseReg::Rsp => 0,
-        CfaBaseReg::Rbp => 1,
+        CfaBaseReg::Rsp => 1,
+        CfaBaseReg::Rbp => 0,
     };
 
     mangled_ra_bit | offset_size_bits | offset_count_bits | cfa_base_reg_bit
