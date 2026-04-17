@@ -42,7 +42,7 @@ impl DwarfUnwinding for ArchAarch64 {
         let fp_rule = unwind_info.register(AArch64::X29);
         let lr_rule = unwind_info.register(AArch64::X30);
 
-        match translate_into_unwind_rule(cfa_rule, &fp_rule, &lr_rule) {
+        match translate_into_unwind_rule(cfa_rule, fp_rule.as_ref(), lr_rule.as_ref()) {
             Ok(unwind_rule) => return Ok(UnwindResult::ExecRule(unwind_rule)),
             Err(_err) => {
                 // Could not translate into a cacheable unwind rule. Fall back to the generic path.
@@ -98,8 +98,9 @@ impl DwarfUnwinding for ArchAarch64 {
 }
 
 fn register_rule_to_cfa_offset<RO: ReaderOffset>(
-    rule: &RegisterRule<RO>,
+    rule: Option<&RegisterRule<RO>>,
 ) -> Result<Option<i64>, ConversionError> {
+    let Some(rule) = rule else { return Ok(None) };
     match *rule {
         RegisterRule::Undefined | RegisterRule::SameValue => Ok(None),
         RegisterRule::Offset(offset) => Ok(Some(offset)),
@@ -109,8 +110,8 @@ fn register_rule_to_cfa_offset<RO: ReaderOffset>(
 
 fn translate_into_unwind_rule<RO: ReaderOffset>(
     cfa_rule: &CfaRule<RO>,
-    fp_rule: &RegisterRule<RO>,
-    lr_rule: &RegisterRule<RO>,
+    fp_rule: Option<&RegisterRule<RO>>,
+    lr_rule: Option<&RegisterRule<RO>>,
 ) -> Result<UnwindRuleAarch64, ConversionError> {
     match cfa_rule {
         CfaRule::RegisterAndOffset { register, offset } => match *register {
@@ -122,23 +123,25 @@ fn translate_into_unwind_rule<RO: ReaderOffset>(
                 match (lr_cfa_offset, fp_cfa_offset) {
                     (None, Some(_)) => Err(ConversionError::RestoringFpButNotLr),
                     (None, None) => {
-                        if let RegisterRule::Undefined = lr_rule {
-                            // If the return address is undefined, this could have two reasons:
-                            //  - The column for the return address may have been manually set to "undefined"
-                            //    using DW_CFA_undefined. This usually means that the function never returns
-                            //    and can be treated as the root of the stack.
-                            //  - The column for the return may have been omitted from the DWARF CFI table.
-                            //    Per spec (at least as of DWARF >= 3), this means that it should be treated
-                            //    as undefined. But it seems that compilers often do this when they really mean
-                            //    "same value".
-                            // Gimli follows DWARF 3 and does not differentiate between "omitted" and "undefined".
-                            Ok(
-                                UnwindRuleAarch64::OffsetSpIfFirstFrameOtherwiseStackEndsHere {
-                                    sp_offset_by_16,
-                                },
-                            )
-                        } else {
-                            Ok(UnwindRuleAarch64::OffsetSp { sp_offset_by_16 })
+                        match lr_rule {
+                            None => {
+                                // The column for the return address register was omitted from the DWARF CFI table.
+                                // Per spec (at least as of DWARF >= 3), this means that it should be treated
+                                // as undefined. However, in practice, it seems that compilers often omit the rule
+                                // to say "same value", see https://github.com/gimli-rs/gimli/issues/857 .
+                                Ok(UnwindRuleAarch64::OffsetSp { sp_offset_by_16 })
+                            }
+                            Some(RegisterRule::Undefined) => {
+                                // The column for the return address was manually set to "undefined"
+                                // using DW_CFA_undefined. This usually means that the function never returns
+                                // and can be treated as the root of the stack.
+                                Ok(
+                                    UnwindRuleAarch64::OffsetSpIfFirstFrameOtherwiseStackEndsHere {
+                                        sp_offset_by_16,
+                                    },
+                                )
+                            }
+                            _ => Ok(UnwindRuleAarch64::OffsetSp { sp_offset_by_16 }),
                         }
                     }
                     (Some(lr_cfa_offset), None) => {

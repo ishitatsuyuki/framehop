@@ -40,7 +40,7 @@ impl DwarfUnwinding for ArchX86_64 {
         let bp_rule = unwind_info.register(X86_64::RBP);
         let ra_rule = unwind_info.register(X86_64::RA);
 
-        match translate_into_unwind_rule(cfa_rule, &bp_rule, &ra_rule) {
+        match translate_into_unwind_rule(cfa_rule, bp_rule.as_ref(), ra_rule.as_ref()) {
             Ok(unwind_rule) => return Ok(UnwindResult::ExecRule(unwind_rule)),
             Err(_err) => {
                 // Could not translate into a cacheable unwind rule. Fall back to the generic path.
@@ -89,29 +89,29 @@ impl DwarfUnwinding for ArchX86_64 {
 }
 
 fn register_rule_to_cfa_offset<RO: ReaderOffset>(
-    rule: &RegisterRule<RO>,
+    rule: Option<&RegisterRule<RO>>,
 ) -> Result<Option<i64>, ConversionError> {
-    match *rule {
-        RegisterRule::Undefined | RegisterRule::SameValue => Ok(None),
-        RegisterRule::Offset(offset) => Ok(Some(offset)),
+    match rule {
+        None | Some(RegisterRule::Undefined) | Some(RegisterRule::SameValue) => Ok(None),
+        Some(RegisterRule::Offset(offset)) => Ok(Some(*offset)),
         _ => Err(ConversionError::RegisterNotStoredRelativeToCfa),
     }
 }
 
 fn translate_into_unwind_rule<RO: ReaderOffset>(
     cfa_rule: &CfaRule<RO>,
-    bp_rule: &RegisterRule<RO>,
-    ra_rule: &RegisterRule<RO>,
+    bp_rule: Option<&RegisterRule<RO>>,
+    ra_rule: Option<&RegisterRule<RO>>,
 ) -> Result<UnwindRuleX86_64, ConversionError> {
     match ra_rule {
-        RegisterRule::Undefined => {
+        None | Some(RegisterRule::Undefined) => {
             // No return address. This means that we've reached the end of the stack.
             return Ok(UnwindRuleX86_64::EndOfStack);
         }
-        RegisterRule::Offset(offset) if *offset == -8 => {
+        Some(RegisterRule::Offset(offset)) if *offset == -8 => {
             // This is normal case. Return address is [CFA-8].
         }
-        RegisterRule::Offset(_) => {
+        Some(RegisterRule::Offset(_)) => {
             // Unsupported, will have to use the slow path.
             return Err(ConversionError::ReturnAddressRuleWithUnexpectedOffset);
         }
