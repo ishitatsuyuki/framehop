@@ -431,7 +431,7 @@ fn eval_expr<R: Reader, UR: DwarfUnwindRegs, S: EvaluationStorage<R>>(
 
 pub fn eval_register_rule<R, F, UR, S>(
     section: &impl UnwindSection<R>,
-    rule: RegisterRule<R::Offset>,
+    rule: Option<RegisterRule<R::Offset>>,
     cfa: u64,
     encoding: Encoding,
     val: u64,
@@ -444,6 +444,7 @@ where
     UR: DwarfUnwindRegs,
     S: EvaluationStorage<R>,
 {
+    let rule = rule?;
     match rule {
         RegisterRule::Undefined => None,
         RegisterRule::SameValue => Some(val),
